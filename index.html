@@ -86,19 +86,35 @@ function setActiveButton(btn){
 
 /* ===== helpers ===== */
 const getAttr=(el,n,d="")=>el.getAttribute(n)??d;
-const decodeEntities=s=>(s||"").replace(/&(lt|gt|amp|quot|#39);/g,m=>({'&lt;':'<','&gt;':'>','&amp;':'&','&quot;':'"','&#39;':"'" }[m]));
-function isFlagsText(t){t=(t||"").trim();return t && /^([A-Z]{2,3}|UN\d+)(\s*,\s*([A-Z]{2,3}|UN\d+))*$/i.test(t)}
+
+// Очистка: декодируем XML-entities, вырезаем все HTML-теги, схлопываем пробелы
+function plain(v){
+  if(v==null) return "";
+  const dec=String(v)
+    .replace(/&(lt|gt|amp|quot|#39);/g, m => ({'&lt;':'<','&gt;':'>','&amp;':'&','&quot;':'"','&#39;':"'" }[m]));
+  const noTags = dec.replace(/<[^>]*>/g,"");
+  return noTags.replace(/\s+/g," ").trim();
+}
+
+function isFlagsText(t){
+  t = plain(t);
+  return t && /^([A-Z]{2,3}|UN\d+)(\s*,\s*([A-Z]{2,3}|UN\d+))*$/i.test(t);
+}
 function parseFlags(t){
-  const r={pk:false,fk:false,uniqueGroups:[]}; if(!t) return r;
-  for(const raw of t.split(",").map(s=>s.trim()).filter(Boolean)){
+  const r={pk:false,fk:false,uniqueGroups:[]};
+  const s=plain(t); if(!s) return r;
+  for(const raw of s.split(",").map(x=>x.trim()).filter(Boolean)){
     const u=raw.toUpperCase();
-    if(u==="PK") r.pk=true; else if(u==="FK") r.fk=true; else if(/^UN\d+$/.test(u)) r.uniqueGroups.push(u)
-  } return r
+    if(u==="PK") r.pk=true;
+    else if(u==="FK") r.fk=true;
+    else if(/^UN\d+$/.test(u)) r.uniqueGroups.push(u);
+  }
+  return r;
 }
 function byY(a,b){
   const ya=Number(a.getElementsByTagName("mxGeometry")[0]?.getAttribute("y")||"0");
   const yb=Number(b.getElementsByTagName("mxGeometry")[0]?.getAttribute("y")||"0");
-  return ya-yb
+  return ya-yb;
 }
 const isSnake = (s)=>/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(s);
 const toSnake = (s)=>s.replace(/([a-z0-9])([A-Z])/g,"$1_$2").replace(/([A-Z]+)([A-Z][a-z0-9])/g,"$1_$2").toLowerCase();
@@ -113,14 +129,15 @@ function parseDrawio(xml){
   const children=new Map();
   for(const c of cells){const p=getAttr(c,"parent"); if(!children.has(p)) children.set(p,[]); children.get(p).push(c)}
 
+  // Таблицы
   const tables=[];
   for(const c of cells){
     if(getAttr(c,"vertex")!=="1") continue;
     const style=getAttr(c,"style","");
     if(!/shape=table/.test(style)) continue;
-    const name=decodeEntities(getAttr(c,"value","")).trim();
+    const name=plain(getAttr(c,"value",""));
     if(!name) continue;
-    tables.push({id:getAttr(c,"id"),name})
+    tables.push({id:getAttr(c,"id"),name});
   }
 
   const model={tables:{},relationships:[]};
@@ -138,14 +155,16 @@ function parseDrawio(xml){
       const rowId=getAttr(row,"id");
       const rKids=(children.get(rowId)||[]);
       let flagText="", colName="";
-      const rowVal=decodeEntities(getAttr(row,"value","")).trim();
+      const rowVal=plain(getAttr(row,"value",""));
       if(rowVal && !isFlagsText(rowVal)) colName=rowVal;
+
       for(const k of rKids){
-        const val=decodeEntities(getAttr(k,"value","")).trim();
+        const val=plain(getAttr(k,"value",""));
         if(!val) continue;
-        if(!flagText && isFlagsText(val)){ flagText=val; continue }
-        if(!colName) colName=val
+        if(!flagText && isFlagsText(val)) { flagText=val; continue; }
+        if(!colName) colName=val;
       }
+
       if(!colName) continue;
       const fl=parseFlags(flagText);
       const col={name:colName, pk:!!fl.pk, fk:!!fl.fk, unique:false};
@@ -153,9 +172,9 @@ function parseDrawio(xml){
       if(fl.pk) pkCols.push(colName);
       for(const g of fl.uniqueGroups){
         if(!uniqueGroups.has(g)) uniqueGroups.set(g,[]);
-        uniqueGroups.get(g).push(colName)
+        uniqueGroups.get(g).push(colName);
       }
-      rowInfoByRowId.set(rowId,{table:t.name,column:colName,flags:fl})
+      rowInfoByRowId.set(rowId,{table:t.name,column:colName,flags:fl});
     }
 
     const indexes=[];
@@ -164,14 +183,14 @@ function parseDrawio(xml){
         const c=columns.find(x=>x.name===cols[0]); if(c) c.unique=true;
         indexes.push({name:`unique_${t.name}_${cols[0]}`,columns:[...cols],unique:true,synth:true});
       } else if(cols.length>1){
-        indexes.push({name:g,columns:[...cols],unique:true,synth:false})
+        indexes.push({name:g,columns:[...cols],unique:true,synth:false});
       }
     }
 
-    model.tables[t.name]={columns,primaryKey:pkCols,unique:columns.filter(c=>c.unique).map(c=>c.name),checks:[],indexes,foreignKeys:[]}
+    model.tables[t.name]={columns,primaryKey:pkCols,unique:columns.filter(c=>c.unique).map(c=>c.name),checks:[],indexes,foreignKeys:[]};
   }
 
-  // edges → FK
+  // Рёбра → FK
   for(const e of cells.filter(x=>getAttr(x,"edge")==="1")){
     const srcId=getAttr(e,"source"), trgId=getAttr(e,"target");
     if(!srcId||!trgId) continue;
@@ -190,20 +209,20 @@ function parseDrawio(xml){
       const sFk=/_id$/.test(s.column), tFk=/_id$/.test(t.column);
       if(sFk && !tFk){ fk=s; pk=t }
       else if(tFk && !sFk){ fk=t; pk=s }
-      else continue
+      else continue;
     }
 
     const tbl=model.tables[fk.table];
     if(tbl){
       const exists=tbl.foreignKeys?.some(x=>x.column===fk.column&&x.refTable===pk.table&&x.refColumn===pk.column);
       if(!exists){
-        (tbl.foreignKeys||(tbl.foreignKeys=[])).push({column:fk.column,refTable:pk.table,refColumn:pk.column})
+        (tbl.foreignKeys||(tbl.foreignKeys=[])).push({column:fk.column,refTable:pk.table,refColumn:pk.column});
       }
     }
-    model.relationships.push({from:`${fk.table}.${fk.column}`,to:`${pk.table}.${pk.column}`,type:card,via:"edge(FK)"})
+    model.relationships.push({from:`${fk.table}.${fk.column}`,to:`${pk.table}.${pk.column}`,type:card,via:"edge(FK)"});
   }
 
-  return model
+  return model;
 }
 
 /* ===== text render (compact + replacements) ===== */
@@ -255,14 +274,14 @@ function buildConstraintsPerColumn(tableName, tblModel){
   return map;
 }
 
-/* Тип данных для колонки в таблице-выводе */
+/* Тип данных в таблицах-выводе */
 function typeForColumn(col, primaryKey){
   if(primaryKey.length===1){
     const pk = primaryKey[0];
     if(col.name===pk && col.name==="id") return "serial";
     if(col.name===pk && col.name==="uuid") return "uuid";
   }
-  return ""; // прочие — пусто
+  return "";
 }
 
 function buildHTMLTable(tableName, tbl){
@@ -291,7 +310,7 @@ function buildHTMLTable(tableName, tbl){
   }
   table.appendChild(tbody);
 
-  // HTML текст для буфера
+  // HTML для буфера
   let html = table.outerHTML;
   if(camelPairs.length){
     const noteHtml = `<div style="margin-top:8px;font-size:12px;color:#8a3d00;background:#fff7ed;border:1px solid #ffd7a3;border-radius:6px;padding:8px">
@@ -300,7 +319,6 @@ function buildHTMLTable(tableName, tbl){
     </div>`;
     html = `<div>${html}${noteHtml}</div>`;
   }
-
   return {tableEl:table, htmlForCopy:html, camelPairs};
 }
 
@@ -336,7 +354,6 @@ function renderConfluenceTables(model){
       card.appendChild(note);
     }
 
-    // (по необходимости можно было бы хранить htmlForCopy, но мы пересобираем при клике)
     container.appendChild(card);
   }
 }
