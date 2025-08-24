@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>draw.io ERD → текст и таблицы (Confluence)</title>
+<style>
+  :root{
+    --bg:#f1f3f4; --ink:#1f2328; --muted:#5f6b76; --panel:#ffffff; --border:#d6d9de; --accent:#2563eb;
+  }
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial}
+  .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+  h2{font-size:16px;margin:18px 0 8px}
+  .row{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:18px}
+  .field{position:relative}
+  .label{font-weight:600;color:var(--muted);margin-bottom:6px}
+  textarea,pre{width:100%;min-height:220px;resize:vertical;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--panel);color:var(--ink);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre{white-space:pre-wrap;word-break:break-word}
+  .top-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:-6px;margin-bottom:6px}
+  button{background:var(--accent);border:0;color:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-weight:600;transition:all 0.2s}
+  .copy-btn,.btn,.copy-btn-inline{background:#e5eaf3;color:#111;border:1px solid var(--border)}
+  .copy-btn:hover,.copy-btn-inline:hover,.btn:hover{filter:brightness(0.96)}
+  .btn-active{background:#cbd3e6 !important; box-shadow:0 0 6px rgba(0,0,0,0.25) inset;}
+  .hint{color:var(--muted);font-size:12px;margin-top:6px}
+  .error{color:#b00020}
+
+  /* Таблицы для Confluence */
+  .tables-wrap{display:flex;flex-direction:column;gap:16px}
+  .table-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 8px 12px;position:relative}
+  .table-title{font-weight:700;margin:2px 0 8px 0}
+  .copy-btn-inline{position:absolute;right:8px;top:8px}
+  table{width:100%;border-collapse:collapse;font:13px/1.4 ui-sans-serif,system-ui,Segoe UI,Roboto,Ubuntu,Arial}
+  th,td{border:1px solid var(--border);padding:6px 8px;text-align:left;background:#fff}
+  th{background:#eef2f8}
+  .camel-note{margin-top:8px;font-size:12px;color:#8a3d00;background:#fff7ed;border:1px solid #ffd7a3;border-radius:6px;padding:8px}
+  .note-title{font-weight:700;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>ERD из draw.io → текст и таблицы (Confluence)</h2>
+
+  <!-- 1 -->
+  <div class="row">
+    <div class="field">
+      <div class="label">1. XML Drawio</div>
+      <div class="top-actions">
+        <button onclick="run()">Преобразовать</button>
+      </div>
+      <textarea id="xmlInput" placeholder="Вставьте несжатый XML из diagrams.net (File → Export as → XML)"></textarea>
+      <div class="hint">Поддерживаются таблицы с <code>shape=table</code>, строки как <code>shape=tableRow</code> или <code>partialRectangle</code>, флаги в левой ячейке (PK, FK, UN1..). Связи — рёбра между строками.</div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="row">
+    <div class="field">
+      <div class="label">2. Схема в текстовом варианте</div>
+      <div class="top-actions" style="position:absolute; right:8px; top:-2px;">
+        <button class="btn" onclick="copyPromptPlusOutput(this)">Создать БД через промпт ИИ</button>
+        <button class="btn" onclick="copyFrom('output', this)">Копировать</button>
+      </div>
+      <pre id="output" aria-live="polite" style="padding-top:40px;"></pre>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="row">
+    <div class="field">
+      <div class="label">3. Таблицы (для вставки в Confluence)</div>
+      <div id="tablesContainer" class="tables-wrap"></div>
+      <div class="hint">Кнопка «Копировать» у каждой таблицы кладёт в буфер <b>HTML</b> (и plain-текст как запасной) — Confluence вставит именно таблицу.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== Глобальный промпт для ИИ ===== */
+var prompt_ai_sql = "Сгенерируй SQL для PostgreSQL: создай базу drawio_example (UTF-8) и таблицы по схеме ниже. Для PK id используй serial, для PK uuid — uuid. Учитывай UN и FK.";
+
+/* === управление стилями нажатия кнопок === */
+function setActiveButton(btn){
+  document.querySelectorAll("button").forEach(b=>b.classList.remove("btn-active"));
+  if(btn) btn.classList.add("btn-active");
+}
+
+/* ===== helpers ===== */
+const getAttr=(el,n,d="")=>el.getAttribute(n)??d;
+const decodeEntities=s=>(s||"").replace(/&(lt|gt|amp|quot|#39);/g,m=>({'&lt;':'<','&gt;':'>','&amp;':'&','&quot;':'"','&#39;':"'" }[m]));
+function isFlagsText(t){t=(t||"").trim();return t && /^([A-Z]{2,3}|UN\d+)(\s*,\s*([A-Z]{2,3}|UN\d+))*$/i.test(t)}
+function parseFlags(t){
+  const r={pk:false,fk:false,uniqueGroups:[]}; if(!t) return r;
+  for(const raw of t.split(",").map(s=>s.trim()).filter(Boolean)){
+    const u=raw.toUpperCase();
+    if(u==="PK") r.pk=true; else if(u==="FK") r.fk=true; else if(/^UN\d+$/.test(u)) r.uniqueGroups.push(u)
+  } return r
+}
+function byY(a,b){
+  const ya=Number(a.getElementsByTagName("mxGeometry")[0]?.getAttribute("y")||"0");
+  const yb=Number(b.getElementsByTagName("mxGeometry")[0]?.getAttribute("y")||"0");
+  return ya-yb
+}
+const isSnake = (s)=>/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(s);
+const toSnake = (s)=>s.replace(/([a-z0-9])([A-Z])/g,"$1_$2").replace(/([A-Z]+)([A-Z][a-z0-9])/g,"$1_$2").toLowerCase();
+
+/* ===== core parse ===== */
+function parseDrawio(xml){
+  const doc=new DOMParser().parseFromString(xml,"text/xml");
+  const mx=doc.getElementsByTagName("mxGraphModel")[0];
+  if(!mx) throw new Error("mxGraphModel не найден. Экспортируйте несжатый XML.");
+
+  const cells=Array.from(doc.getElementsByTagName("mxCell"));
+  const children=new Map();
+  for(const c of cells){const p=getAttr(c,"parent"); if(!children.has(p)) children.set(p,[]); children.get(p).push(c)}
+
+  const tables=[];
+  for(const c of cells){
+    if(getAttr(c,"vertex")!=="1") continue;
+    const style=getAttr(c,"style","");
+    if(!/shape=table/.test(style)) continue;
+    const name=decodeEntities(getAttr(c,"value","")).trim();
+    if(!name) continue;
+    tables.push({id:getAttr(c,"id"),name})
+  }
+
+  const model={tables:{},relationships:[]};
+  const rowInfoByRowId=new Map(); // rowId -> {table,column,flags}
+
+  for(const t of tables){
+    const kids=(children.get(t.id)||[]);
+    let rows=kids.filter(r=>getAttr(r,"vertex")==="1" && /shape=tableRow/.test(getAttr(r,"style","")));
+    if(!rows.length){ rows=kids.filter(r=>getAttr(r,"vertex")==="1" && /shape=partialRectangle/.test(getAttr(r,"style",""))); }
+    rows.sort(byY);
+
+    const columns=[], pkCols=[], uniqueGroups=new Map();
+
+    for(const row of rows){
+      const rowId=getAttr(row,"id");
+      const rKids=(children.get(rowId)||[]);
+      let flagText="", colName="";
+      const rowVal=decodeEntities(getAttr(row,"value","")).trim();
+      if(rowVal && !isFlagsText(rowVal)) colName=rowVal;
+      for(const k of rKids){
+        const val=decodeEntities(getAttr(k,"value","")).trim();
+        if(!val) continue;
+        if(!flagText && isFlagsText(val)){ flagText=val; continue }
+        if(!colName) colName=val
+      }
+      if(!colName) continue;
+      const fl=parseFlags(flagText);
+      const col={name:colName, pk:!!fl.pk, fk:!!fl.fk, unique:false};
+      columns.push(col);
+      if(fl.pk) pkCols.push(colName);
+      for(const g of fl.uniqueGroups){
+        if(!uniqueGroups.has(g)) uniqueGroups.set(g,[]);
+        uniqueGroups.get(g).push(colName)
+      }
+      rowInfoByRowId.set(rowId,{table:t.name,column:colName,flags:fl})
+    }
+
+    const indexes=[];
+    for(const [g,cols] of uniqueGroups){
+      if(cols.length===1){
+        const c=columns.find(x=>x.name===cols[0]); if(c) c.unique=true;
+        indexes.push({name:`unique_${t.name}_${cols[0]}`,columns:[...cols],unique:true,synth:true});
+      } else if(cols.length>1){
+        indexes.push({name:g,columns:[...cols],unique:true,synth:false})
+      }
+    }
+
+    model.tables[t.name]={columns,primaryKey:pkCols,unique:columns.filter(c=>c.unique).map(c=>c.name),checks:[],indexes,foreignKeys:[]}
+  }
+
+  // edges → FK
+  for(const e of cells.filter(x=>getAttr(x,"edge")==="1")){
+    const srcId=getAttr(e,"source"), trgId=getAttr(e,"target");
+    if(!srcId||!trgId) continue;
+    const s=rowInfoByRowId.get(srcId), t=rowInfoByRowId.get(trgId);
+    if(!s||!t) continue;
+
+    const style=getAttr(e,"style","");
+    const token=(side)=>((style.match(new RegExp(side+"Arrow=([^;]+)"))||[])[1]||"").toLowerCase();
+    const toCard=(tok)=> tok.includes("many")||tok.includes("mand") ? "N" : (tok.includes("one")?"1":"?");
+    const card=toCard(token("start"))+":"+toCard(token("end"));
+
+    let fk=s, pk=t;
+    if(s.flags.fk && !t.flags.fk){ fk=s; pk=t }
+    else if(t.flags.fk && !s.flags.fk){ fk=t; pk=s }
+    else{
+      const sFk=/_id$/.test(s.column), tFk=/_id$/.test(t.column);
+      if(sFk && !tFk){ fk=s; pk=t }
+      else if(tFk && !sFk){ fk=t; pk=s }
+      else continue
+    }
+
+    const tbl=model.tables[fk.table];
+    if(tbl){
+      const exists=tbl.foreignKeys?.some(x=>x.column===fk.column&&x.refTable===pk.table&&x.refColumn===pk.column);
+      if(!exists){
+        (tbl.foreignKeys||(tbl.foreignKeys=[])).push({column:fk.column,refTable:pk.table,refColumn:pk.column})
+      }
+    }
+    model.relationships.push({from:`${fk.table}.${fk.column}`,to:`${pk.table}.${pk.column}`,type:card,via:"edge(FK)"})
+  }
+
+  return model
+}
+
+/* ===== text render (compact + replacements) ===== */
+function modelToText(model){
+  const out=[];
+  for(const t of Object.keys(model.tables).sort()){
+    const tbl=model.tables[t];
+    out.push(`table:${t}`);
+    for(const c of tbl.columns){
+      const tags=[];
+      if(c.pk) tags.push("PK");
+      if(c.unique) tags.push("unique");
+      out.push(`- ${c.name}${tags.length?` [${tags.join(",")}]`:""}`)
+    }
+    if(tbl.primaryKey.length) out.push(`PK:(${tbl.primaryKey.join(",")})`);
+    if(tbl.indexes.length) for(const ix of tbl.indexes) out.push(`index:${ix.name}(${ix.columns.join(",")}) unique`);
+    if(tbl.foreignKeys?.length) for(const fk of tbl.foreignKeys) out.push(`FK:${fk.column}->${fk.refTable}.${fk.refColumn}`);
+    out.push("")
+  }
+  if(model.relationships.length){
+    out.push("связи:");
+    for(const r of model.relationships) out.push(`${r.from}->${r.to} [${r.type}]`)
+  }
+  return out.join("\n").trim()
+}
+
+/* ===== Confluence tables render ===== */
+const TABLE_HEADERS=["Поле","Тип данных","Обязательность","Описание","Варианты значений","Ограничения"];
+
+function buildConstraintsPerColumn(tableName, tblModel){
+  const map=new Map(); const ensure=(c)=>{if(!map.has(c)) map.set(c,[])};
+  for(const c of (tblModel.primaryKey||[])){ ensure(c); map.get(c).push("PK") }
+  for(const fk of (tblModel.foreignKeys||[])){ ensure(fk.column); map.get(fk.column).push("FK") }
+  for(const ix of (tblModel.indexes||[])){
+    if(!ix.unique) continue;
+    if(ix.columns.length===1){
+      const c=ix.columns[0]; ensure(c);
+      const idxName = ix.name || `unique_${tableName}_${c}`;
+      map.get(c).push(`UN (индекс ${idxName})`);
+    } else {
+      const idxName = ix.name || `unique_${tableName}_${ix.columns.join("_")}`;
+      for(const c of ix.columns){
+        ensure(c);
+        const others = ix.columns.filter(x=>x!==c).join(", ");
+        map.get(c).push(`UN: связка с ${others} (индекс ${idxName})`);
+      }
+    }
+  }
+  return map;
+}
+
+/* Тип данных для колонки в таблице-выводе */
+function typeForColumn(col, primaryKey){
+  if(primaryKey.length===1){
+    const pk = primaryKey[0];
+    if(col.name===pk && col.name==="id") return "serial";
+    if(col.name===pk && col.name==="uuid") return "uuid";
+  }
+  return ""; // прочие — пусто
+}
+
+function buildHTMLTable(tableName, tbl){
+  // HTML table element
+  const table=document.createElement("table");
+  const thead=document.createElement("thead");
+  const trh=document.createElement("tr");
+  for(const h of TABLE_HEADERS){ const th=document.createElement("th"); th.textContent=h; trh.appendChild(th); }
+  thead.appendChild(trh); table.appendChild(thead);
+
+  const tbody=document.createElement("tbody");
+  const constrMap=buildConstraintsPerColumn(tableName, tbl);
+  const camelPairs=[];
+
+  for(const col of tbl.columns){
+    const tr=document.createElement("tr");
+    const notNull = col.pk ? "Not null" : "";
+    const constraints = (constrMap.get(col.name)||[]).join("; ");
+    if(!isSnake(col.name) && /[A-Z]/.test(col.name)){
+      camelPairs.push({orig:col.name, snake:toSnake(col.name)});
+    }
+    const typ = typeForColumn(col, tbl.primaryKey);
+    const cells=[ col.name, typ, notNull, "", "", constraints ];
+    for(const v of cells){ const td=document.createElement("td"); td.textContent=v; tr.appendChild(td); }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+
+  // HTML текст для буфера
+  let html = table.outerHTML;
+  if(camelPairs.length){
+    const noteHtml = `<div style="margin-top:8px;font-size:12px;color:#8a3d00;background:#fff7ed;border:1px solid #ffd7a3;border-radius:6px;padding:8px">
+      <div style="font-weight:700;margin-bottom:4px">Поля camelCase должны быть snake_case!</div>
+      ${camelPairs.map((p,i)=>`${i+1}. ${p.orig} -> ${p.snake}`).join("<br>")}
+    </div>`;
+    html = `<div>${html}${noteHtml}</div>`;
+  }
+
+  return {tableEl:table, htmlForCopy:html, camelPairs};
+}
+
+function renderConfluenceTables(model){
+  const container=document.getElementById("tablesContainer");
+  container.innerHTML="";
+
+  const tnames=Object.keys(model.tables).sort();
+  for(const t of tnames){
+    const tbl=model.tables[t];
+    const card=document.createElement("div");
+    card.className="table-card";
+
+    const title=document.createElement("div");
+    title.className="table-title";
+    title.textContent=`Таблица: ${t}`;
+    card.appendChild(title);
+
+    const copyBtn=document.createElement("button");
+    copyBtn.className="copy-btn-inline";
+    copyBtn.textContent="Копировать";
+    copyBtn.addEventListener("click",(e)=>copyTableAsHTML(t, tbl, e.currentTarget));
+    card.appendChild(copyBtn);
+
+    const {tableEl, htmlForCopy, camelPairs} = buildHTMLTable(t, tbl);
+    card.appendChild(tableEl);
+
+    if(camelPairs.length){
+      const note=document.createElement("div");
+      note.className="camel-note";
+      const list = camelPairs.map((p,i)=>`${i+1}. ${p.orig} -> ${p.snake}`).join("<br>");
+      note.innerHTML=`<div class="note-title">Поля camelCase должны быть snake_case!</div>${list}`;
+      card.appendChild(note);
+    }
+
+    // (по необходимости можно было бы хранить htmlForCopy, но мы пересобираем при клике)
+    container.appendChild(card);
+  }
+}
+
+/* ===== Копирование ===== */
+async function copyHTML(html, plainFallback="", btn){
+  setActiveButton(btn);
+  if(navigator.clipboard && window.ClipboardItem){
+    const data = {
+      "text/html": new Blob([html], {type:"text/html"}),
+      "text/plain": new Blob([plainFallback||html.replace(/<[^>]+>/g,"")], {type:"text/plain"})
+    };
+    try{ await navigator.clipboard.write([new ClipboardItem(data)]); return }catch(_){}
+  }
+  // Фолбэк
+  const ta=document.createElement("textarea"); ta.value=plainFallback||html; document.body.appendChild(ta); ta.select();
+  try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
+}
+
+function copyFrom(id, btn){
+  const el=document.getElementById(id);
+  copyHTML(el.innerHTML, el.textContent, btn);
+}
+
+function copyTableAsHTML(tableName, tbl, btn){
+  const {htmlForCopy} = buildHTMLTable(tableName, tbl);
+  copyHTML(htmlForCopy, "", btn);
+}
+
+function copyPromptPlusOutput(btn){
+  const out=document.getElementById("output").textContent || "";
+  const payload = (prompt_ai_sql||"").trim() + "\n\n" + out.trim();
+  setActiveButton(btn);
+  if(navigator.clipboard && window.ClipboardItem){
+    const data={"text/plain": new Blob([payload], {type:"text/plain"})};
+    navigator.clipboard.write([new ClipboardItem(data)]).catch(()=>fallbackCopy(payload));
+  }else{ fallbackCopy(payload); }
+}
+function fallbackCopy(text){
+  const ta=document.createElement("textarea");
+  ta.value=text; document.body.appendChild(ta); ta.select();
+  try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
+}
+
+/* ===== run ===== */
+function modelToText(model){
+  const out=[];
+  for(const t of Object.keys(model.tables).sort()){
+    const tbl=model.tables[t];
+    out.push(`table:${t}`);
+    for(const c of tbl.columns){
+      const tags=[];
+      if(c.pk) tags.push("PK");
+      if(c.unique) tags.push("unique");
+      out.push(`- ${c.name}${tags.length?` [${tags.join(",")}]`:""}`)
+    }
+    if(tbl.primaryKey.length) out.push(`PK:(${tbl.primaryKey.join(",")})`);
+    if(tbl.indexes.length) for(const ix of tbl.indexes) out.push(`index:${ix.name}(${ix.columns.join(",")}) unique`);
+    if(tbl.foreignKeys?.length) for(const fk of tbl.foreignKeys) out.push(`FK:${fk.column}->${fk.refTable}.${fk.refColumn}`);
+    out.push("")
+  }
+  if(model.relationships.length){
+    out.push("связи:");
+    for(const r of model.relationships) out.push(`${r.from}->${r.to} [${r.type}]`)
+  }
+  return out.join("\n").trim()
+}
+
+function run(){
+  const xml=document.getElementById("xmlInput").value;
+  const out=document.getElementById("output");
+  const tablesWrap=document.getElementById("tablesContainer");
+  try{
+    const model=parseDrawio(xml);
+    const text=modelToText(model);
+    out.classList.remove("error");
+    out.textContent=text;
+    renderConfluenceTables(model);
+  }catch(e){
+    out.classList.add("error");
+    out.textContent="Ошибка: "+(e?.message||e);
+    tablesWrap.innerHTML="";
+  }
+}
+</script>
+</body>
+</html>
