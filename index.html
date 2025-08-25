@@ -30,6 +30,18 @@
   th{background:#eef2f8}
   .camel-note{margin-top:8px;font-size:12px;color:#8a3d00;background:#fff7ed;border:1px solid #ffd7a3;border-radius:6px;padding:8px}
   .note-title{font-weight:700;margin-bottom:4px}
+
+  /* Toast */
+  .toast {
+    position: fixed; right: 16px; bottom: 16px;
+    background:#111; color:#fff; padding:10px 12px; border-radius:10px;
+    box-shadow:0 4px 20px rgba(0,0,0,0.25);
+    opacity:0; transform: translateY(8px);
+    transition: opacity .25s ease, transform .25s ease;
+    pointer-events:none; z-index: 9999; font-size:13px;
+  }
+  .toast.show { opacity:1; transform: translateY(0); }
+  .toast.hide { opacity:0; transform: translateY(8px); }
 </style>
 </head>
 <body>
@@ -70,6 +82,9 @@
   </div>
 </div>
 
+<!-- Toast element -->
+<div id="toast" class="toast" role="status" aria-live="polite">Скопировано в буфер.</div>
+
 <script>
 /* Глобальный промпт ИИ */
 var prompt_ai_sql = `1. Напиши SQL запрос для создания таблиц в базе данных postgresql 14, с данными из схемы ниже "Схема таблиц базы данных", но только без всех связей, индексов и ограничений!
@@ -108,10 +123,25 @@ var prompt_ai_sql = `1. Напиши SQL запрос для создания т
 
 Схема таблиц базы данных:`;
 
-/* Кнопки: визуальный "active" */
+/* Активная кнопка */
 function setActiveButton(btn){
   document.querySelectorAll("button").forEach(b=>b.classList.remove("btn-active"));
   if(btn) btn.classList.add("btn-active");
+}
+
+/* Toast */
+let toastTimer=null;
+function showToast(msg="Скопировано в буфер."){
+  const el=document.getElementById("toast");
+  el.textContent=msg;
+  el.classList.remove("hide");
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  // Показываем ~1.75s, затем ~0.25s на плавное скрытие = ~2s
+  toastTimer=setTimeout(()=>{
+    el.classList.add("hide");
+    el.classList.remove("show");
+  }, 1750);
 }
 
 /* Helpers */
@@ -211,7 +241,7 @@ function parseDrawio(xml){
   // edges → FK
   for(const e of cells.filter(x=>getAttr(x,"edge")==="1")){
     const srcId=getAttr(e,"source"), trgId=getAttr(e,"target");
-    if(!srcId||!trgId) continue; /* <-- здесь был баг: trгId */
+    if(!srcId||!trgId) continue;
     const s=rowInfoByRowId.get(srcId), t=rowInfoByRowId.get(trgId);
     if(!s||!t) continue;
 
@@ -362,10 +392,11 @@ async function copyHTML(html, plainFallback="", btn){
   setActiveButton(btn);
   if(navigator.clipboard && window.ClipboardItem){
     const data = { "text/html": new Blob([html], {type:"text/html"}), "text/plain": new Blob([plainFallback||html.replace(/<[^>]+>/g,"")], {type:"text/plain"}) };
-    try{ await navigator.clipboard.write([new ClipboardItem(data)]); return }catch(_){}
+    try{ await navigator.clipboard.write([new ClipboardItem(data)]); showToast(); return }catch(_){}
   }
   const ta=document.createElement("textarea"); ta.value=plainFallback||html; document.body.appendChild(ta); ta.select();
   try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
+  showToast();
 }
 function copyFrom(id, btn){
   const el=document.getElementById(id);
@@ -381,8 +412,10 @@ function copyPromptPlusOutput(btn){
   setActiveButton(btn);
   if(navigator.clipboard && window.ClipboardItem){
     const data={"text/plain": new Blob([payload], {type:"text/plain"})};
-    navigator.clipboard.write([new ClipboardItem(data)]).catch(()=>fallbackCopy(payload));
-  }else{ fallbackCopy(payload); }
+    navigator.clipboard.write([new ClipboardItem(data)]).then(()=>showToast()).catch(()=>{
+      fallbackCopy(payload); showToast();
+    });
+  }else{ fallbackCopy(payload); showToast(); }
 }
 function fallbackCopy(text){
   const ta=document.createElement("textarea");
@@ -391,6 +424,26 @@ function fallbackCopy(text){
 }
 
 /* Рендер текста и запуск */
+function modelToText(model){
+  const out=[];
+  for(const t of Object.keys(model.tables).sort()){
+    const tbl=model.tables[t];
+    out.push(`table:${t}`);
+    for(const c of tbl.columns){
+      const tags=[]; if(c.pk) tags.push("PK"); if(c.unique) tags.push("unique");
+      out.push(`- ${c.name}${tags.length?` [${tags.join(",")}]`:""}`)
+    }
+    if(tbl.primaryKey.length) out.push(`PK:(${tbl.primaryKey.join(",")})`);
+    if(tbl.indexes.length) for(const ix of tbl.indexes) out.push(`index:${ix.name}(${ix.columns.join(",")}) unique`);
+    if(tbl.foreignKeys?.length) for(const fk of tbl.foreignKeys) out.push(`FK:${fk.column}->${fk.refTable}.${fk.refColumn}`);
+    out.push("")
+  }
+  if(model.relationships.length){
+    out.push("связи:");
+    for(const r of model.relationships) out.push(`${r.from}->${r.to} [${r.type}]`)
+  }
+  return out.join("\n").trim()
+}
 function run(){
   const xml=document.getElementById("xmlInput").value;
   const out=document.getElementById("output");
