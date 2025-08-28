@@ -30,16 +30,9 @@
   th{background:#eef2f8}
   .camel-note{margin-top:8px;font-size:12px;color:#8a3d00;background:#fff7ed;border:1px solid #ffd7a3;border-radius:6px;padding:8px}
   .note-title{font-weight:700;margin-bottom:4px}
-
-  /* Toast */
-  .toast {
-    position: fixed; right: 16px; bottom: 16px;
-    background:#111; color:#fff; padding:10px 12px; border-radius:10px;
-    box-shadow:0 4px 20px rgba(0,0,0,0.25);
-    opacity:0; transform: translateY(8px);
-    transition: opacity .25s ease, transform .25s ease;
-    pointer-events:none; z-index: 9999; font-size:13px;
-  }
+  .toast { position: fixed; right: 16px; bottom: 16px; background:#111; color:#fff; padding:10px 12px; border-radius:10px;
+           box-shadow:0 4px 20px rgba(0,0,0,0.25); opacity:0; transform: translateY(8px);
+           transition: opacity .25s ease, transform .25s ease; pointer-events:none; z-index:9999; font-size:13px; }
   .toast.show { opacity:1; transform: translateY(0); }
   .toast.hide { opacity:0; transform: translateY(8px); }
 </style>
@@ -48,7 +41,6 @@
 <div class="wrap">
   <h2>ERD из draw.io → текст и таблицы (Confluence)</h2>
 
-  <!-- 1 -->
   <div class="row">
     <div class="field">
       <div class="label">1. XML Drawio</div>
@@ -56,11 +48,10 @@
         <button onclick="run()">Преобразовать</button>
       </div>
       <textarea id="xmlInput" placeholder="Вставьте несжатый XML из diagrams.net (File → Export as → XML)"></textarea>
-      <div class="hint">Поддерживаются таблицы с <code>shape=table</code>, строки как <code>shape=tableRow</code> или <code>partialRectangle</code>, флаги в левой ячейке (PK, FK, UN1..). Связи — рёбра между строками.</div>
+      <div class="hint">Поддерживаются shape=table и строки как shape=tableRow/partialRectangle; флаги PK, FK, UN1..; связи — рёбра между строками; кардинальности — edgeLabel (1:1/1:n/n:n) и/или стрелочные ERD-стили.</div>
     </div>
   </div>
 
-  <!-- 2 -->
   <div class="row">
     <div class="field">
       <div class="label">2. Схема в текстовом варианте</div>
@@ -72,21 +63,18 @@
     </div>
   </div>
 
-  <!-- 3 -->
   <div class="row">
     <div class="field">
       <div class="label">3. Таблицы (для вставки в Confluence)</div>
       <div id="tablesContainer" class="tables-wrap"></div>
-      <div class="hint">Кнопка «Копировать» у каждой таблицы кладёт в буфер <b>HTML</b> (и plain-текст как запасной) — Confluence вставит именно таблицу.</div>
+      <div class="hint">«Копировать» у каждой таблицы кладёт в буфер <b>HTML</b> (и plain-текст как запасной) — Confluence вставит именно таблицу.</div>
     </div>
   </div>
 </div>
 
-<!-- Toast element -->
 <div id="toast" class="toast" role="status" aria-live="polite">Скопировано в буфер.</div>
 
 <script>
-/* Глобальный промпт ИИ */
 var prompt_ai_sql = `1. Напиши SQL запрос для создания таблиц в базе данных postgresql 14, с данными из схемы ниже "Схема таблиц базы данных", но только без всех связей, индексов и ограничений!
 Для PK id используй serial, для PK uuid используй uuid.
 Новую базу данных создавать не нужно, скрипт будет выполняться внутри уже существующей базы данных.
@@ -123,13 +111,10 @@ var prompt_ai_sql = `1. Напиши SQL запрос для создания т
 
 Схема таблиц базы данных:`;
 
-/* Активная кнопка */
 function setActiveButton(btn){
   document.querySelectorAll("button").forEach(b=>b.classList.remove("btn-active"));
   if(btn) btn.classList.add("btn-active");
 }
-
-/* Toast */
 let toastTimer=null;
 function showToast(msg="Скопировано в буфер."){
   const el=document.getElementById("toast");
@@ -137,14 +122,12 @@ function showToast(msg="Скопировано в буфер."){
   el.classList.remove("hide");
   el.classList.add("show");
   clearTimeout(toastTimer);
-  // Показываем ~1.75s, затем ~0.25s на плавное скрытие = ~2s
   toastTimer=setTimeout(()=>{
     el.classList.add("hide");
     el.classList.remove("show");
   }, 1750);
 }
 
-/* Helpers */
 const getAttr=(el,n,d="")=>el.getAttribute(n)??d;
 function plain(v){
   if(v==null) return "";
@@ -152,13 +135,20 @@ function plain(v){
   const noTags=dec.replace(/<[^>]*>/g,"");
   return noTags.replace(/\s+/g," ").trim();
 }
-function isFlagsText(t){t=plain(t); return t && /^([A-Z]{2,3}|UN\d+)(\s*,\s*([A-Z]{2,3}|UN\d+))*$/i.test(t)}
-function parseFlags(t){
-  const r={pk:false,fk:false,uniqueGroups:[]}, s=plain(t); if(!s) return r;
-  for(const raw of s.split(",").map(x=>x.trim()).filter(Boolean)){
-    const u=raw.toUpperCase();
-    if(u==="PK") r.pk=true; else if(u==="FK") r.fk=true; else if(/^UN\d+$/.test(u)) r.uniqueGroups.push(u);
-  } return r;
+function isFlagsText(t){
+  t = plain(t);
+  return !!t && /^(?:PK|FK|UN\d+)(?:\s*,\s*(?:PK|FK|UN\d+))*$/i.test(t);
+}
+function parseFlagsList(arr){
+  const r={pk:false,fk:false,uniqueGroups:[]};
+  for(const item of arr){
+    const s=plain(item); if(!s) continue;
+    for(const tok of s.split(",").map(x=>x.trim()).filter(Boolean)){
+      const u=tok.toUpperCase();
+      if(u==="PK") r.pk=true; else if(u==="FK") r.fk=true; else if(/^UN\d+$/.test(u)) r.uniqueGroups.push(u);
+    }
+  }
+  return r;
 }
 function byY(a,b){
   const ya=Number(a.getElementsByTagName("mxGeometry")[0]?.getAttribute("y")||"0");
@@ -168,7 +158,6 @@ function byY(a,b){
 const isSnake=(s)=>/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(s);
 const toSnake=(s)=>s.replace(/([a-z0-9])([A-Z])/g,"$1_$2").replace(/([A-Z]+)([A-Z][a-z0-9])/g,"$1_$2").toLowerCase();
 
-/* Parse draw.io */
 function parseDrawio(xml){
   const doc=new DOMParser().parseFromString(xml,"text/xml");
   const mx=doc.getElementsByTagName("mxGraphModel")[0];
@@ -202,27 +191,35 @@ function parseDrawio(xml){
     for(const row of rows){
       const rowId=getAttr(row,"id");
       const rKids=(children.get(rowId)||[]);
-      let flagText="", colName="";
-      const rowVal=plain(getAttr(row,"value",""));
-      if(rowVal && !isFlagsText(rowVal)) colName=rowVal;
-
+      const childParts=[];
       for(const k of rKids){
         const val=plain(getAttr(k,"value",""));
-        if(!val) continue;
-        if(!flagText && isFlagsText(val)) { flagText=val; continue; }
-        if(!colName) colName=val;
+        const gx=Number(k.getElementsByTagName("mxGeometry")[0]?.getAttribute("x")||"0");
+        childParts.push({val,gx,isFlag:isFlagsText(val)});
       }
 
-      if(!colName) continue;
-      const fl=parseFlags(flagText);
-      const col={name:colName, pk:!!fl.pk, fk:!!fl.fk, unique:false};
+      const flagTexts = childParts.filter(p=>p.isFlag).map(p=>p.val);
+      const fl = parseFlagsList(flagTexts);
+
+      let nameCandidate = childParts.filter(p=>!p.isFlag && p.val).sort((a,b)=>a.gx-b.gx).pop()?.val || "";
+      if(!nameCandidate){
+        const rowVal=plain(getAttr(row,"value",""));
+        if(rowVal && !isFlagsText(rowVal)) nameCandidate=rowVal;
+      }
+      if(!nameCandidate){
+        nameCandidate = childParts.find(p=>!p.isFlag && p.val)?.val || "";
+      }
+      if(!nameCandidate) continue;
+
+      const col={name:nameCandidate, pk:!!fl.pk, fk:!!fl.fk, unique:false};
       columns.push(col);
-      if(fl.pk) pkCols.push(colName);
+      if(fl.pk) pkCols.push(nameCandidate);
+
       for(const g of fl.uniqueGroups){
         if(!uniqueGroups.has(g)) uniqueGroups.set(g,[]);
-        uniqueGroups.get(g).push(colName);
+        uniqueGroups.get(g).push(nameCandidate);
       }
-      rowInfoByRowId.set(rowId,{table:t.name,column:colName,flags:fl});
+      rowInfoByRowId.set(rowId,{table:t.name,column:nameCandidate,flags:fl});
     }
 
     const indexes=[];
@@ -238,42 +235,99 @@ function parseDrawio(xml){
     model.tables[t.name]={columns,primaryKey:pkCols,unique:columns.filter(c=>c.unique).map(c=>c.name),checks:[],indexes,foreignKeys:[]};
   }
 
-  // edges → FK
-  for(const e of cells.filter(x=>getAttr(x,"edge")==="1")){
-    const srcId=getAttr(e,"source"), trgId=getAttr(e,"target");
-    if(!srcId||!trgId) continue;
-    const s=rowInfoByRowId.get(srcId), t=rowInfoByRowId.get(trgId);
-    if(!s||!t) continue;
+  // helper: распознаём множество вариантов стрелок draw.io для ER
+const arrowToCard = (tok)=>{
+  const v = (tok||"").toLowerCase();
+  // типичные ER-стрелки draw.io
+  if(/ermany|crow|crowfoot|many/.test(v)) return "N";
+  if(/erone|one/.test(v)) return "1";
+  // 0..1 и 0..N трактуем как 1 и N соответственно
+  if(/zerotoone|zero_to_one|0\.\.*1|0..1/.test(v)) return "1";
+  if(/zerotomany|zero_to_many|0\.\.*n|0..n/.test(v)) return "N";
+  // на всякий: встречается опечатка "mand"
+  if(/mand/.test(v)) return "N";
+  return "?";
+};
 
-    const style=getAttr(e,"style","");
-    const token=(side)=>((style.match(new RegExp(side+"Arrow=([^;]+)"))||[])[1]||"").toLowerCase();
-    const toCard=(tok)=> tok.includes("many")||tok.includes("mand") ? "N" : (tok.includes("one")?"1":"?");
-    const card=toCard(token("start"))+":"+toCard(token("end"));
+// === Рёбра → FK + кардинальности из стрелок И/ИЛИ edgeLabel ===
+for (const e of cells.filter(x => getAttr(x,"edge")==="1")) {
+  const edgeId = getAttr(e,"id");
+  const srcId  = getAttr(e,"source"), trgId = getAttr(e,"target");
+  if (!srcId || !trgId) continue;
 
-    let fk=s, pk=t;
-    if(s.flags.fk && !t.flags.fk){ fk=s; pk=t }
-    else if(t.flags.fk && !s.flags.fk){ fk=t; pk=s }
-    else{
-      const sFk=/_id$/.test(s.column), tFk=/_id$/.test(t.column);
-      if(sFk && !tFk){ fk=s; pk=t }
-      else if(tFk && !sFk){ fk=t; pk=s }
-      else continue;
+  const s = rowInfoByRowId.get(srcId), t = rowInfoByRowId.get(trgId);
+  if (!s || !t) continue;
+
+  // 1) База: стрелочные стили
+  const style = (getAttr(e,"style","")||"").toLowerCase();
+  const getTok = side => ((style.match(new RegExp(side+"Arrow=([^;]+)"))||[])[1]||"");
+  let srcCard = arrowToCard(getTok("start"));
+  let trgCard = arrowToCard(getTok("end"));
+
+  // 2) edgeLabel (имеет приоритет и может дополнять любую из сторон)
+  const lbs = (children.get(edgeId)||[]).filter(lb => /edgeLabel/.test(getAttr(lb,"style","")));
+  const setSide = (isSource, val) => {
+    const v = (val==="n"||val==="N") ? "N" : (val==="1" ? "1" : "?");
+    if (isSource) srcCard = v; else trgCard = v; // edgeLabel перебивает
+  };
+  for (const lb of lbs) {
+    const raw = plain(getAttr(lb,"value","")).toLowerCase(); // '1:n' | 'n:1' | '1' | 'n'
+    if (!raw) continue;
+    const g  = lb.getElementsByTagName("mxGeometry")[0];
+    const gx = parseFloat(g?.getAttribute("x")||"0");
+    if (raw.includes(":")) {
+      const [a,b] = raw.split(":");
+      if (gx < 0) { setSide(true, a); setSide(false, b); }  // ближе к source
+      else        { setSide(false,a); setSide(true, b); }   // ближе к target
+    } else if (raw==="1" || raw==="n") {
+      if (gx < 0) setSide(true, raw); else setSide(false, raw);
     }
-
-    const tbl=model.tables[fk.table];
-    if(tbl){
-      const exists=tbl.foreignKeys?.some(x=>x.column===fk.column&&x.refTable===pk.table&&x.refColumn===pk.column);
-      if(!exists){
-        (tbl.foreignKeys||(tbl.foreignKeys=[])).push({column:fk.column,refTable:pk.table,refColumn:pk.column});
-      }
-    }
-    model.relationships.push({from:`${fk.table}.${fk.column}`,to:`${pk.table}.${pk.column}`,type:card,via:"edge(FK)"});
   }
+
+  // 3) Определяем сторону FK (как раньше)
+  let fk = s, pk = t;  // по умолчанию считаем source=fk → target=pk
+  if (s.flags.fk && !t.flags.fk) { fk=s; pk=t; }
+  else if (t.flags.fk && !s.flags.fk) { fk=t; pk=s; }
+  else {
+    const sFk = /_id$/.test(s.column), tFk = /_id$/.test(t.column);
+    if (sFk && !tFk) { fk=s; pk=t; }
+    else if (tFk && !sFk) { fk=t; pk=s; }
+    else {
+      // связь неясна — фиксируем только кардинальность, что смогли извлечь
+      const cardOnly = `${srcCard}:${trgCard}`;
+      model.relationships.push({from:`${s.table}.${s.column}`,to:`${t.table}.${t.column}`,type:cardOnly,via:"edge(?)"});
+      continue;
+    }
+  }
+
+  // 4) ФОЛБЭК КАРДИНАЛЬНОСТИ ОТ НАПРАВЛЕНИЯ FK→PK
+  // Если после стрелок/лейблов какая-то сторона осталась "?"
+  // — заполняем из логики FK: FK→PK = N:1
+  if (srcCard==="?" || trgCard==="?") {
+    // кто является source в финальной паре fk→pk?
+    const fkIsSource = (fk===s);
+    if (fkIsSource) {
+      if (srcCard==="?") srcCard = "N";
+      if (trgCard==="?") trgCard = "1";
+    } else {
+      if (srcCard==="?") srcCard = "1";
+      if (trgCard==="?") trgCard = "N";
+    }
+  }
+  const card = `${srcCard}:${trgCard}`;
+
+  // 5) Сохраняем FK на стороне fk-таблицы
+  const tbl = model.tables[fk.table];
+  if (tbl) {
+    const exists = tbl.foreignKeys?.some(x => x.column===fk.column && x.refTable===pk.table && x.refColumn===pk.column);
+    if (!exists) (tbl.foreignKeys||(tbl.foreignKeys=[])).push({column:fk.column,refTable:pk.table,refColumn:pk.column});
+  }
+  model.relationships.push({from:`${fk.table}.${fk.column}`,to:`${pk.table}.${pk.column}`,type:card,via:"edge(FK)"});
+}
 
   return model;
 }
 
-/* Текстовый вывод */
 function modelToText(model){
   const out=[];
   for(const t of Object.keys(model.tables).sort()){
@@ -295,7 +349,7 @@ function modelToText(model){
   return out.join("\n").trim()
 }
 
-/* Confluence-таблицы */
+/* ====== Confluence-таблицы ====== */
 const TABLE_HEADERS=["Поле","Тип данных","Обязательность","Описание","Варианты значений","Ограничения"];
 function buildConstraintsPerColumn(tableName, tblModel){
   const map=new Map(); const ensure=c=>{if(!map.has(c)) map.set(c,[])};
@@ -336,9 +390,6 @@ function buildHTMLTable(tableName, tbl){
   const tbody=document.createElement("tbody");
   const constrMap=buildConstraintsPerColumn(tableName, tbl);
   const camelPairs=[];
-  const isSnake=(s)=>/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(s);
-  const toSnake=(s)=>s.replace(/([a-z0-9])([A-Z])/g,"$1_$2").replace(/([A-Z]+)([A-Z][a-z0-9])/g,"$1_$2").toLowerCase();
-
   for(const col of tbl.columns){
     const tr=document.createElement("tr");
     const notNull = col.pk ? "Not null" : "";
@@ -423,27 +474,6 @@ function fallbackCopy(text){
   try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
 }
 
-/* Рендер текста и запуск */
-function modelToText(model){
-  const out=[];
-  for(const t of Object.keys(model.tables).sort()){
-    const tbl=model.tables[t];
-    out.push(`table:${t}`);
-    for(const c of tbl.columns){
-      const tags=[]; if(c.pk) tags.push("PK"); if(c.unique) tags.push("unique");
-      out.push(`- ${c.name}${tags.length?` [${tags.join(",")}]`:""}`)
-    }
-    if(tbl.primaryKey.length) out.push(`PK:(${tbl.primaryKey.join(",")})`);
-    if(tbl.indexes.length) for(const ix of tbl.indexes) out.push(`index:${ix.name}(${ix.columns.join(",")}) unique`);
-    if(tbl.foreignKeys?.length) for(const fk of tbl.foreignKeys) out.push(`FK:${fk.column}->${fk.refTable}.${fk.refColumn}`);
-    out.push("")
-  }
-  if(model.relationships.length){
-    out.push("связи:");
-    for(const r of model.relationships) out.push(`${r.from}->${r.to} [${r.type}]`)
-  }
-  return out.join("\n").trim()
-}
 function run(){
   const xml=document.getElementById("xmlInput").value;
   const out=document.getElementById("output");
