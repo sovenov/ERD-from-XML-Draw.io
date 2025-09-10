@@ -16,9 +16,28 @@
   pre{white-space:pre-wrap;word-break:break-word}
   .top-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:-6px;margin-bottom:6px}
   button{background:var(--accent);border:0;color:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font-weight:600;transition:all 0.2s}
-  .copy-btn,.btn,.copy-btn-inline{background:#e5eaf3;color:#111;border:1px solid var(--border)}
-  .copy-btn:hover,.copy-btn-inline:hover,.btn:hover{filter:brightness(0.96)}
+  .copy-btn,.btn,.copy-btn-inline,.file-btn{background:#e5eaf3;color:#111;border:1px solid var(--border)}
+  .copy-btn:hover,.copy-btn-inline:hover,.btn:hover,.file-btn:hover{filter:brightness(0.96)}
   .btn-active{background:#cbd3e6 !important; box-shadow:0 0 6px rgba(0,0,0,0.25) inset;}
+  .file-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 10px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    line-height: 1.1;
+    text-align: left;
+    position: relative;
+    vertical-align: middle;
+    transition: box-shadow .2s;
+    user-select: none;
+  }
+  .file-btn svg {
+    width: 1em; height: 1em; display: inline-block; vertical-align: middle;
+    margin-right: 2px;
+  }
+  #xmlUploadInput {display:none;}
   .hint{color:var(--muted);font-size:12px;margin-top:6px}
   .error{color:#b00020}
   .tables-wrap{display:flex;flex-direction:column;gap:16px}
@@ -37,6 +56,10 @@
            transition: opacity .25s ease, transform .25s ease; pointer-events:none; z-index:9999; font-size:13px; }
   .toast.show { opacity:1; transform: translateY(0); }
   .toast.hide { opacity:0; transform: translateY(8px); }
+  #xmlInput.dropzone {
+    border: 2px dashed var(--accent);
+    background: #e6eeff;
+  }
 </style>
 </head>
 <body>
@@ -49,11 +72,15 @@
       <div class="top-actions">
         <button onclick="run()">Преобразовать</button>
       </div>
-      <textarea id="xmlInput" placeholder="Вставьте несжатый XML из diagrams.net (File → Export as → XML)"></textarea>
-      <div class="hint">Поддерживаются shape=table и строки как shape=tableRow/partialRectangle; флаги PK, FK, UN1..; связи — рёбра между строками; кардинальности — edgeLabel (1:1/1:n/n:n) и/или стрелочные ERD-стили.</div>
+      <label class="file-btn" id="xmlUploadLabel" for="xmlUploadInput" tabindex="0">
+        <svg viewBox="0 0 20 20" fill="none"><path d="M7.5 9.5L13 4M13 4C13.8284 3.17157 15.1716 3.17157 16 4C16.8284 4.82843 16.8284 6.17157 16 7L8.46447 14.5355C6.92893 16.0711 4.57107 16.0711 3.03553 14.5355C1.5 13 1.5 10.6421 3.03553 9.10656L10 2.14214" stroke="#111" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Загрузить XML/DRAWIO/TXT
+      </label>
+      <input type="file" id="xmlUploadInput" accept=".xml,.drawio,.txt,text/xml,text/plain,application/xml" />
+      <textarea id="xmlInput" placeholder="Вставьте несжатый XML из diagrams.net (File → Export as → XML) или перетащите файл"></textarea>
+      <div class="hint">Можно вставить текст, перетащить xml/drawio/txt файл или выбрать его кнопкой выше. Поддерживаются shape=table и строки как shape=tableRow/partialRectangle; флаги PK, FK, UN1..; связи — рёбра между строками; кардинальности — edgeLabel (1:1/1:n/n:n) и/или стрелочные ERD-стили.</div>
     </div>
   </div>
-
   <div class="row">
     <div class="field">
       <div class="label">2. Схема в текстовом варианте</div>
@@ -64,7 +91,6 @@
       <pre id="output" aria-live="polite" style="padding-top:40px;"></pre>
     </div>
   </div>
-
   <div class="row">
     <div class="field">
       <div class="label">3. Таблицы (для вставки в Confluence)</div>
@@ -75,7 +101,56 @@
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite">Скопировано в буфер.</div>
 <script>
-/* ===== Промпт ИИ ===== */
+// --- drag & drop и file select ---
+const xmlInput = document.getElementById('xmlInput');
+const xmlUploadInput = document.getElementById('xmlUploadInput');
+['dragenter', 'dragover'].forEach(ev => {
+  xmlInput.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation();
+    xmlInput.classList.add('dropzone');
+  });
+});
+['dragleave', 'drop'].forEach(ev => {
+  xmlInput.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation();
+    xmlInput.classList.remove('dropzone');
+  });
+});
+xmlInput.addEventListener('drop', function(e) {
+  e.preventDefault(); e.stopPropagation();
+  xmlInput.classList.remove('dropzone');
+  const files = e.dataTransfer.files;
+  if (files && files.length > 0) {
+    const file = files[0];
+    if (!/\.xml$|\.drawio$|\.txt$/i.test(file.name)) {
+      showToast('Можно только XML, DRAWIO или TXT');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      xmlInput.value = evt.target.result;
+      showToast('Файл загружен');
+    };
+    reader.readAsText(file, 'utf-8');
+  }
+});
+xmlUploadInput.addEventListener('change', function(e) {
+  const files = e.target.files;
+  if (files && files.length > 0) {
+    const file = files[0];
+    if (!/\.xml$|\.drawio$|\.txt$/i.test(file.name)) {
+      showToast('Можно только XML, DRAWIO или TXT');
+      xmlUploadInput.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      xmlInput.value = evt.target.result;
+      showToast('Файл загружен');
+    };
+    reader.readAsText(file, 'utf-8');
+  }
+});
 var prompt_ai_sql = `1. Напиши SQL запрос для создания таблиц в базе данных postgresql 14, с данными из схемы ниже "Схема таблиц базы данных", но только без всех связей, индексов и ограничений!
 Для PK id используй serial, для PK uuid используй uuid.
 Новую базу данных создавать не нужно, скрипт будет выполняться внутри уже существующей базы данных.
@@ -111,8 +186,6 @@ var prompt_ai_sql = `1. Напиши SQL запрос для создания т
 - нет
 
 Схема таблиц базы данных:`;
-
-/* ===== UI ===== */
 function setActiveButton(btn){
   document.querySelectorAll("button").forEach(b=>b.classList.remove("btn-active"));
   if(btn) btn.classList.add("btn-active");
@@ -129,8 +202,6 @@ function showToast(msg="Скопировано в буфер."){
     el.classList.remove("show");
   }, 1750);
 }
-
-/* ===== Helpers ===== */
 const getAttr=(el,n,d="")=>el.getAttribute(n)??d;
 function plain(v){
   if(v==null) return "";
@@ -162,8 +233,6 @@ const isSnake=(s)=>/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(s);
 const toSnake=(s)=>s.replace(/([a-z0-9])([A-Z])/g,"$1_$2").replace(/([A-Z]+)([A-Z][a-z0-9])/g,"$1_$2").toLowerCase();
 const isLowercase=(s)=> s === s.toLowerCase();
 const isPluralEn=(s)=> /s$/.test(s);
-
-/* ===== Валидация 1.2–1.10 ===== */
 function columnMap(tbl){
   const m=new Map();
   for(const c of tbl.columns) m.set(c.name,c);
@@ -172,7 +241,6 @@ function columnMap(tbl){
 function validateModel(model){
   const issues=new Map();
   const add=(t,msg)=>{ if(!issues.has(t)) issues.set(t,[]); issues.get(t).push(msg); };
-
   for(const [tname, tbl] of Object.entries(model.tables)){
     const cols = tbl.columns.map(c=>c.name);
     const cMap = columnMap(tbl);
@@ -218,17 +286,13 @@ function validateModel(model){
   }
   return issues;
 }
-
-/* ===== Парсинг draw.io ===== */
 function parseDrawio(xml){
   const doc=new DOMParser().parseFromString(xml,"text/xml");
   const mx=doc.getElementsByTagName("mxGraphModel")[0];
   if(!mx) throw new Error("mxGraphModel не найден. Экспортируйте несжатый XML.");
-
   const cells=Array.from(doc.getElementsByTagName("mxCell"));
   const children=new Map();
   for(const c of cells){const p=getAttr(c,"parent"); if(!children.has(p)) children.set(p,[]); children.get(p).push(c)}
-
   const tables=[];
   for(const c of cells){
     if(getAttr(c,"vertex")!=="1") continue;
@@ -238,18 +302,14 @@ function parseDrawio(xml){
     if(!name) continue;
     tables.push({id:getAttr(c,"id"),name});
   }
-
   const model={tables:{},relationships:[]};
   const rowInfoByRowId=new Map();
-
   for(const t of tables){
     const kids=(children.get(t.id)||[]);
     let rows=kids.filter(r=>getAttr(r,"vertex")==="1" && /shape=tableRow/.test(getAttr(r,"style","")));
     if(!rows.length){ rows=kids.filter(r=>getAttr(r,"vertex")==="1" && /shape=partialRectangle/.test(getAttr(r,"style",""))); }
     rows.sort(byY);
-
     const columns=[], pkCols=[], uniqueGroups=new Map();
-
     for(const row of rows){
       const rowId=getAttr(row,"id");
       const rKids=(children.get(rowId)||[]);
@@ -259,10 +319,8 @@ function parseDrawio(xml){
         const gx=Number(k.getElementsByTagName("mxGeometry")[0]?.getAttribute("x")||"0");
         childParts.push({val,gx,isFlag:isFlagsText(val)});
       }
-
       const flagTexts = childParts.filter(p=>p.isFlag).map(p=>p.val);
       const fl = parseFlagsList(flagTexts);
-
       let nameCandidate = childParts.filter(p=>!p.isFlag && p.val).sort((a,b)=>a.gx-b.gx).pop()?.val || "";
       if(!nameCandidate){
         const rowVal=plain(getAttr(row,"value",""));
@@ -272,23 +330,19 @@ function parseDrawio(xml){
         nameCandidate = childParts.find(p=>!p.isFlag && p.val)?.val || "";
       }
       if(!nameCandidate) continue;
-
       let col={name:nameCandidate, pk:!!fl.pk, fk:!!fl.fk, unique:false};
-      // --- ВАЖНО: тут прописываем типы для PK сразу
       if (col.pk) {
         if (col.name === "id") col.dataType = "serial";
         else if (col.name === "uuid") col.dataType = "uuid";
       }
       columns.push(col);
       if(fl.pk) pkCols.push(nameCandidate);
-
       for(const g of fl.uniqueGroups){
         if(!uniqueGroups.has(g)) uniqueGroups.set(g,[]);
         uniqueGroups.get(g).push(nameCandidate);
       }
       rowInfoByRowId.set(rowId,{table:t.name,column:nameCandidate,flags:fl});
     }
-
     const indexes=[];
     for(const [g,cols] of uniqueGroups){
       if(cols.length===1){
@@ -298,11 +352,8 @@ function parseDrawio(xml){
         indexes.push({name:g,columns:[...cols],unique:true,synth:false});
       }
     }
-
     model.tables[t.name]={columns,primaryKey:pkCols,unique:columns.filter(c=>c.unique).map(c=>c.name),checks:[],indexes,foreignKeys:[]};
   }
-
-  // === Рёбра → FK + кардинальности (стрелки и/или edgeLabel) ===
   const arrowToCard = (tok)=>{
     const v = (tok||"").toLowerCase();
     if(/ermany|crow|crowfoot|many/.test(v)) return "N";
@@ -312,21 +363,17 @@ function parseDrawio(xml){
     if(/mand/.test(v)) return "N";
     return "?";
   };
-
   for(const e of cells.filter(x=>getAttr(x,"edge")==="1"))
   {
     const edgeId=getAttr(e,"id");
     const srcId=getAttr(e,"source"), trgId=getAttr(e,"target");
     if(!srcId||!trgId) continue;
-
     const s=rowInfoByRowId.get(srcId), t=rowInfoByRowId.get(trgId);
     if(!s||!t) continue;
-
     const style = (getAttr(e,"style","")||"").toLowerCase();
     const getTok = side => ((style.match(new RegExp(side+"Arrow=([^;]+)"))||[])[1]||"");
     let srcCard = arrowToCard(getTok("start"));
     let trgCard = arrowToCard(getTok("end"));
-
     const lbs=(children.get(edgeId)||[]).filter(lb=>/edgeLabel/.test(getAttr(lb,"style","")));
     const setSide = (isSource, val) => {
       const v = (val==="n"||val==="N")?"N":(val==="1")?"1":"?";
@@ -345,7 +392,6 @@ function parseDrawio(xml){
         if(gx<0) setSide(true,raw); else setSide(false,raw);
       }
     }
-
     let fk=s, pk=t;
     if(s.flags.fk && !t.flags.fk){ fk=s; pk=t; }
     else if(t.flags.fk && !s.flags.fk){ fk=t; pk=s; }
@@ -359,14 +405,12 @@ function parseDrawio(xml){
         continue;
       }
     }
-
     if(srcCard==="?" || trgCard==="?"){
       const fkIsSource = (fk===s);
       if(fkIsSource){ if(srcCard==="?") srcCard="N"; if(trgCard==="?") trgCard="1"; }
       else          { if(srcCard==="?") srcCard="1"; if(trgCard==="?") trgCard="N"; }
     }
     const card = `${srcCard}:${trgCard}`;
-
     const tbl=model.tables[fk.table];
     if(tbl){
       const exists=tbl.foreignKeys?.some(x=>x.column===fk.column&&x.refTable===pk.table&&x.refColumn===pk.column);
@@ -376,8 +420,7 @@ function parseDrawio(xml){
     }
     model.relationships.push({from:`${fk.table}.${fk.column}`,to:`${pk.table}.${pk.column}`,type:card,via:"edge(FK)"});
   }
-
-  // === ДОРАБОТКА: выставляем типы данных FK в соответствии с PK ===
+  // ДОРАБОТКА: выставляем типы данных FK в соответствии с PK
   for (const [tname, tbl] of Object.entries(model.tables)) {
     if (!tbl.foreignKeys) continue;
     for (const fk of tbl.foreignKeys) {
@@ -392,11 +435,8 @@ function parseDrawio(xml){
       }
     }
   }
-
   return model;
 }
-
-/* ===== Текстовая сводка (компактная, БЕЗ предупреждений) ===== */
 function modelToText(model){
   const out=[];
   for(const t of Object.keys(model.tables).sort()){
@@ -417,8 +457,6 @@ function modelToText(model){
   }
   return out.join("\n").trim();
 }
-
-/* ===== Confluence-таблицы + предупреждения под таблицей ===== */
 const TABLE_HEADERS=["Поле","Тип данных","Обязательность","Описание","Варианты значений","Ограничения"];
 function buildConstraintsPerColumn(tableName, tblModel){
   const map=new Map(); const ensure=c=>{if(!map.has(c)) map.set(c,[])};
@@ -455,7 +493,6 @@ function buildHTMLTable(tableName, tbl){
   const trh=document.createElement("tr");
   for(const h of TABLE_HEADERS){ const th=document.createElement("th"); th.textContent=h; trh.appendChild(th); }
   thead.appendChild(trh); table.appendChild(thead);
-
   const tbody=document.createElement("tbody");
   const constrMap=buildConstraintsPerColumn(tableName, tbl);
   const camelPairs=[];
@@ -464,14 +501,12 @@ function buildHTMLTable(tableName, tbl){
     const notNull = col.pk ? "Not null" : "";
     const constraints = (constrMap.get(col.name)||[]).join("; ");
     if(!isSnake(col.name) && /[A-Z]/.test(col.name)){ camelPairs.push({orig:col.name, snake:toSnake(col.name)}); }
-    // --- Теперь тут выводим dataType, если оно есть
     const typ = col.dataType || typeForColumn(col, tbl.primaryKey) || "";
     const cells=[ col.name, typ, notNull, "", "", constraints ];
     for(const v of cells){ const td=document.createElement("td"); td.textContent=v; tr.appendChild(td); }
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
-
   let html = table.outerHTML;
   if(camelPairs.length){
     const noteHtml = `<div class="camel-note">
@@ -482,7 +517,6 @@ function buildHTMLTable(tableName, tbl){
   }
   return {tableEl:table, htmlForCopy:html, camelPairs};
 }
-
 function renderConfluenceTables(model){
   const warnings = validateModel(model);
   const container=document.getElementById("tablesContainer");
@@ -497,10 +531,8 @@ function renderConfluenceTables(model){
     copyBtn.className="copy-btn-inline"; copyBtn.textContent="Копировать";
     copyBtn.addEventListener("click",(e)=>copyTableAsHTML(t, tbl, e.currentTarget));
     card.appendChild(copyBtn);
-
     const {tableEl, camelPairs}=buildHTMLTable(t, tbl);
     card.appendChild(tableEl);
-
     const ws = warnings.get(t);
     if(ws && ws.length){
       const warn = document.createElement("div");
@@ -518,8 +550,6 @@ function renderConfluenceTables(model){
     container.appendChild(card);
   }
 }
-
-/* ===== Копирование ===== */
 async function copyHTML(html, plainFallback="", btn){
   setActiveButton(btn);
   if(navigator.clipboard && window.ClipboardItem){
@@ -554,8 +584,6 @@ function fallbackCopy(text){
   ta.value=text; document.body.appendChild(ta); ta.select();
   try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
 }
-
-/* ===== Запуск ===== */
 function run(){
   const xml=document.getElementById("xmlInput").value;
   const out=document.getElementById("output");
