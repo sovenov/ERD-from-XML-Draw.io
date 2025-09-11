@@ -60,6 +60,16 @@
     border: 2px dashed var(--accent);
     background: #e6eeff;
   }
+  .checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 13px;
+  }
+  .checkbox-container input {
+    margin: 0;
+  }
 </style>
 </head>
 <body>
@@ -78,6 +88,10 @@
       </label>
       <input type="file" id="xmlUploadInput" accept=".xml,.drawio,.txt,text/xml,text/plain,application/xml" />
       <textarea id="xmlInput" placeholder="Вставьте несжатый XML из diagrams.net (File → Export as → XML) или перетащите файл"></textarea>
+      <div class="checkbox-container">
+        <input type="checkbox" id="colorCheckbox">
+        <label for="colorCheckbox">Учитывать цвета</label>
+      </div>
       <div class="hint">Можно вставить текст, перетащить xml/drawio/txt файл или выбрать его кнопкой выше. Поддерживаются shape=table и строки как shape=tableRow/partialRectangle; флаги PK, FK, UN1..; связи — рёбра между строками; кардинальности — edgeLabel (1:1/1:n/n:n) и/или стрелочные ERD-стили.</div>
     </div>
   </div>
@@ -104,6 +118,7 @@
 // --- drag & drop и file select ---
 const xmlInput = document.getElementById('xmlInput');
 const xmlUploadInput = document.getElementById('xmlUploadInput');
+const colorCheckbox = document.getElementById('colorCheckbox');
 ['dragenter', 'dragover'].forEach(ev => {
   xmlInput.addEventListener(ev, e => {
     e.preventDefault(); e.stopPropagation();
@@ -205,7 +220,7 @@ function showToast(msg="Скопировано в буфер."){
 const getAttr=(el,n,d="")=>el.getAttribute(n)??d;
 function plain(v){
   if(v==null) return "";
-  const dec=String(v).replace(/&(lt|gt|amp|quot|#39);/g,m=>({'&lt;':'<','&gt;':'>','&amp;':'&','&quot;':'"','&#39;':"'" }[m]));
+  const dec=String(v).replace(/&(lt|gt|amp|quot|#39);/g,m=>({'<':'<','>':'>','&amp;':'&','&quot;':'"','&#39;':"'" }[m]));
   const noTags=dec.replace(/<[^>]*>/g,"");
   return noTags.replace(/\s+/g," ").trim();
 }
@@ -286,6 +301,20 @@ function validateModel(model){
   }
   return issues;
 }
+function getColorName(fillColor) {
+  if (!fillColor) return "без цвета";
+  
+  // Нормализуем цвет (убираем # если есть)
+  const normalizedColor = fillColor.replace(/^#/, '').toLowerCase();
+  
+  // Определяем цвет по известным значениям
+  switch(normalizedColor) {
+    case "fff2cc": return "жёлтый";
+    case "dae8fc": return "синий";
+    case "d5e8d4": return "зелёный";
+    default: return "неизвестный цвет";
+  }
+}
 function parseDrawio(xml){
   const doc=new DOMParser().parseFromString(xml,"text/xml");
   const mx=doc.getElementsByTagName("mxGraphModel")[0];
@@ -300,7 +329,7 @@ function parseDrawio(xml){
     if(!/shape=table/.test(style)) continue;
     const name=plain(getAttr(c,"value",""));
     if(!name) continue;
-    tables.push({id:getAttr(c,"id"),name});
+    tables.push({id:getAttr(c,"id"),name,style});
   }
   const model={tables:{},relationships:[]};
   const rowInfoByRowId=new Map();
@@ -352,7 +381,11 @@ function parseDrawio(xml){
         indexes.push({name:g,columns:[...cols],unique:true,synth:false});
       }
     }
-    model.tables[t.name]={columns,primaryKey:pkCols,unique:columns.filter(c=>c.unique).map(c=>c.name),checks:[],indexes,foreignKeys:[]};
+    // Извлекаем цвет из стиля
+    const fillColorMatch = t.style.match(/fillColor=([^;]+)/);
+    const fillColor = fillColorMatch ? fillColorMatch[1] : null;
+    
+    model.tables[t.name]={columns,primaryKey:pkCols,unique:columns.filter(c=>c.unique).map(c=>c.name),checks:[],indexes,foreignKeys:[],fillColor};
   }
   const arrowToCard = (tok)=>{
     const v = (tok||"").toLowerCase();
@@ -439,9 +472,15 @@ function parseDrawio(xml){
 }
 function modelToText(model){
   const out=[];
+  const useColors = colorCheckbox.checked;
   for(const t of Object.keys(model.tables).sort()){
     const tbl=model.tables[t];
-    out.push(`table:${t}`);
+    let tableLine = `table:${t}`;
+    if (useColors) {
+      const colorName = getColorName(tbl.fillColor);
+      tableLine += ` (${colorName})`;
+    }
+    out.push(tableLine);
     for(const c of tbl.columns){
       const tags=[]; if(c.pk) tags.push("PK"); if(c.unique) tags.push("unique");
       out.push(`- ${c.name}${tags.length?` [${tags.join(",")}]`:""}`)
