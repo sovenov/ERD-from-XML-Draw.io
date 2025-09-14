@@ -99,6 +99,7 @@
     <div class="field">
       <div class="label">2. Схема в текстовом варианте</div>
       <div class="top-actions" style="position:absolute; right:8px; top:-2px;">
+        <button class="btn" onclick="analyzeDB(this)">Анализ БД через промпт ИИ</button>
         <button class="btn" onclick="copyPromptPlusOutput(this)">Создать БД через промпт ИИ</button>
         <button class="btn" onclick="copyFrom('output', this)">Копировать</button>
       </div>
@@ -622,6 +623,36 @@ function fallbackCopy(text){
   const ta=document.createElement("textarea");
   ta.value=text; document.body.appendChild(ta); ta.select();
   try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
+}
+async function analyzeDB(btn) {
+  setActiveButton(btn);
+  try {
+    // Загружаем содержимое файла promt_analyze.txt
+    const response = await fetch('/promt_analyze.txt');
+    if (!response.ok) {
+      throw new Error(`Ошибка загрузки файла: ${response.status} ${response.statusText}`);
+    }
+    const fileContent = await response.text();
+    
+    // Получаем текст из поля вывода
+    const outputText = document.getElementById("output").textContent || "";
+    
+    // Формируем полный текст для копирования
+    const fullText = `${fileContent}\n\nСхема в текстовом варианте:\n${outputText}`;
+    
+    // Копируем в буфер обмена
+    if(navigator.clipboard && window.ClipboardItem){
+      const data={"text/plain": new Blob([fullText], {type:"text/plain"})};
+      await navigator.clipboard.write([new ClipboardItem(data)]);
+      showToast("Текст для анализа скопирован в буфер");
+    } else {
+      fallbackCopy(fullText);
+      showToast("Текст для анализа скопирован в буфер");
+    }
+  } catch (error) {
+    console.error('Ошибка при загрузке файла:', error);
+    showToast("Ошибка загрузки файла promt_analyze.txt");
+  }
 }
 function run(){
   const xml=document.getElementById("xmlInput").value;
