@@ -100,7 +100,7 @@
       <div class="label">2. Схема в текстовом варианте</div>
       <div class="top-actions" style="position:absolute; right:8px; top:-2px;">
         <button class="btn" onclick="analyzeDB(this)">Анализ БД через промпт ИИ</button>
-        <button class="btn" onclick="copyPromptPlusOutput(this)">Создать БД через промпт ИИ</button>
+        <button class="btn" onclick="createDB(this)">Создать БД через промпт ИИ</button>
         <button class="btn" onclick="copyFrom('output', this)">Копировать</button>
       </div>
       <pre id="output" aria-live="polite" style="padding-top:40px;"></pre>
@@ -167,41 +167,6 @@ xmlUploadInput.addEventListener('change', function(e) {
     reader.readAsText(file, 'utf-8');
   }
 });
-var prompt_ai_sql = `1. Напиши SQL запрос для создания таблиц в базе данных postgresql 14, с данными из схемы ниже "Схема таблиц базы данных", но только без всех связей, индексов и ограничений!
-Для PK id используй serial, для PK uuid используй uuid.
-Новую базу данных создавать не нужно, скрипт будет выполняться внутри уже существующей базы данных.
-Для создания таблиц используй проверку на существования такой таблицы "create table if not exists". 
-Названия всех столбцов оберни в кавычки для избежания конфликтов с ключевыми словами postgresql 14.
-Никогда не используй тип данных "TEXT". Вместо этого лучше используй "varchar". Если посчитаешь необходимым использовать тип данных varchar, тогда varchar должен быть без ограничений, если я явно не укажу тебе обратное для определённых столбцов в моих предпочтениях.
-Проверь внимательно, чтобы он точно работал для postgresql 14!
-
-2. Напиши отдельно SQL скрипт который заполнит каждую таблицу минимум на 100 строк с разными данными, можно больше, если этого требуют связи, индексы и ограничения.
-Но данные должны быть согласованы, чтобы при дальнейшем построении связей, ограничений и индексов, согласно схеме ниже, не было ошибок и конфликтов.
-Не должно быть повторяющихся записей, чтобы можно было построить связи, ограничения и индексы согласно схеме.
-В каждом столбце должно быть минимум несколько значений Null, если это возможно, и несколько заполненных значений, если это возможно.
-Проверь внимательно, чтобы он точно работал для postgresql 14!
-
-3. Напиши отдельно SQL скрипт, который создаст все необходимые связи, ограничения и индексы между таблицами, согласно схеме.
-Если связь, ограничение или индекс требует уникальности записи, сделай перед этим скрипт, который удалит все подобные дубликаты.
-Если связь по схеме была непонятна, тогда не делай её в SQL запросе, а просто в конце ответа напиши об этом!
-Проверь внимательно, чтобы он точно работал для postgresql 14!
-
-4. Напиши отдельно SQL скрипт для удаления всех индексов, связей и ограничений для текущих таблиц из базы данных.
-Проверь внимательно, чтобы он точно работал для postgresql 14!
-
-5. Напиши отдельно SQL скрипт для очистки всех таблиц из текущей базы.
-Именно очистки, а не удаления самих таблиц!
-Учти, что могут быть связи, индексы и иные ограничения!
-Проверь внимательно, чтобы он точно работал для postgresql 14!
-
-6. Напиши отдельно SQL скрипт удаления всех таблиц из текущей базы.
-Учти, что могут быть связи, индексы и иные ограничения!
-Проверь внимательно, чтобы он точно работал для postgresql 14!
-
-Мои дополнительные предпочтения:
-- нет
-
-Схема таблиц базы данных:`;
 function setActiveButton(btn){
   document.querySelectorAll("button").forEach(b=>b.classList.remove("btn-active"));
   if(btn) btn.classList.add("btn-active");
@@ -608,27 +573,41 @@ function copyTableAsHTML(tableName, tbl, btn){
   const {htmlForCopy} = buildHTMLTable(tableName, tbl);
   copyHTML(htmlForCopy, "", btn);
 }
-function copyPromptPlusOutput(btn){
-  const out=document.getElementById("output").textContent || "";
-  const payload = (prompt_ai_sql||"").trim() + "\n\n" + out.trim();
+async function createDB(btn) {
   setActiveButton(btn);
-  if(navigator.clipboard && window.ClipboardItem){
-    const data={"text/plain": new Blob([payload], {type:"text/plain"})};
-    navigator.clipboard.write([new ClipboardItem(data)]).then(()=>showToast()).catch(()=>{
-      fallbackCopy(payload); showToast();
-    });
-  }else{ fallbackCopy(payload); showToast(); }
-}
-function fallbackCopy(text){
-  const ta=document.createElement("textarea");
-  ta.value=text; document.body.appendChild(ta); ta.select();
-  try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
+  try {
+    // Загружаем содержимое файла prompts/prompt_crud_db.txt
+    const response = await fetch('./prompts/prompt_crud_db.txt');
+    if (!response.ok) {
+      throw new Error(`Ошибка загрузки файла: ${response.status} ${response.statusText}`);
+    }
+    const fileContent = await response.text();
+    
+    // Получаем текст из поля вывода
+    const outputText = document.getElementById("output").textContent || "";
+    
+    // Формируем полный текст для копирования (только содержимое схемы в конце)
+    const fullText = `${fileContent}\n\n${outputText}`;
+    
+    // Копируем в буфер обмена
+    if(navigator.clipboard && window.ClipboardItem){
+      const data={"text/plain": new Blob([fullText], {type:"text/plain"})};
+      await navigator.clipboard.write([new ClipboardItem(data)]);
+      showToast("Текст для создания БД скопирован в буфер");
+    } else {
+      fallbackCopy(fullText);
+      showToast("Текст для создания БД скопирован в буфер");
+    }
+  } catch (error) {
+    console.error('Ошибка при загрузке файла:', error);
+    showToast("Ошибка загрузки файла prompts/prompt_crud_db.txt");
+  }
 }
 async function analyzeDB(btn) {
   setActiveButton(btn);
   try {
-    // Загружаем содержимое файла promt_analyze.txt
-    const response = await fetch('/promt_analyze.txt');
+    // Загружаем содержимое файла prompts/prompt_analyze.txt (исправлено имя файла)
+    const response = await fetch('./prompts/prompt_analyze.txt');
     if (!response.ok) {
       throw new Error(`Ошибка загрузки файла: ${response.status} ${response.statusText}`);
     }
@@ -651,8 +630,13 @@ async function analyzeDB(btn) {
     }
   } catch (error) {
     console.error('Ошибка при загрузке файла:', error);
-    showToast("Ошибка загрузки файла promt_analyze.txt");
+    showToast("Ошибка загрузки файла prompts/prompt_analyze.txt");
   }
+}
+function fallbackCopy(text){
+  const ta=document.createElement("textarea");
+  ta.value=text; document.body.appendChild(ta); ta.select();
+  try{document.execCommand("copy")}finally{document.body.removeChild(ta)}
 }
 function run(){
   const xml=document.getElementById("xmlInput").value;
