@@ -439,6 +439,18 @@ function parseDrawio(xml){
 function modelToText(model){
   const out=[];
   const useColors = colorCheckbox.checked;
+  
+  // Создаем карту внешних ключей для быстрого поиска
+  const fkMap = new Map();
+  for(const [tname, tbl] of Object.entries(model.tables)) {
+    if(tbl.foreignKeys) {
+      for(const fk of tbl.foreignKeys) {
+        const key = `${tname}.${fk.column}`;
+        fkMap.set(key, `${fk.refTable}.${fk.refColumn}`);
+      }
+    }
+  }
+  
   for(const t of Object.keys(model.tables).sort()){
     const tbl=model.tables[t];
     let tableLine = `table:${t}`;
@@ -447,18 +459,77 @@ function modelToText(model){
       tableLine += ` (${colorName})`;
     }
     out.push(tableLine);
+    
     for(const c of tbl.columns){
-      const tags=[]; if(c.pk) tags.push("PK"); if(c.unique) tags.push("unique");
+      const tags=[]; 
+      if(c.pk) tags.push("PK"); 
+      if(c.unique) tags.push("unique");
+      // Проверяем, является ли столбец внешним ключом
+      const fkKey = `${t}.${c.name}`;
+      if(fkMap.has(fkKey)) {
+        tags.push("FK");
+      }
       out.push(`- ${c.name}${tags.length?` [${tags.join(",")}]`:""}`)
     }
+    
     if(tbl.primaryKey.length) out.push(`PK:(${tbl.primaryKey.join(",")})`);
     if(tbl.indexes.length) for(const ix of tbl.indexes) out.push(`index:${ix.name}(${ix.columns.join(",")}) unique`);
     if(tbl.foreignKeys?.length) for(const fk of tbl.foreignKeys) out.push(`FK:${fk.column}->${fk.refTable}.${fk.refColumn}`);
     out.push("");
   }
+  
   if(model.relationships.length){
     out.push("связи:");
-    for(const r of model.relationships) out.push(`${r.from}->${r.to} [${r.type}]`)
+    for(const r of model.relationships) {
+      // Определяем правильный порядок кардинальности
+      // Ищем FK в таблице from, который ссылается на to
+      let foundFK = false;
+      let cardType = "1:1"; // По умолчанию
+      
+      // Проверяем, есть ли FK в таблице from, ссылающийся на to
+      for(const [tname, tbl] of Object.entries(model.tables)) {
+        if(tbl.foreignKeys) {
+          for(const fk of tbl.foreignKeys) {
+            const fullFK = `${tname}.${fk.column}`;
+            if(fullFK === r.from && `${fk.refTable}.${fk.refColumn}` === r.to) {
+              foundFK = true;
+              // Если FK находится в from и ссылается на to, то это [N:1]
+              cardType = `${r.type.split(":")[0]}:${r.type.split(":")[1]}`;
+              break;
+            }
+          }
+        }
+        if(foundFK) break;
+      }
+      
+      // Если FK не найден в from, проверяем обратное направление
+      if(!foundFK) {
+        // Проверяем, есть ли FK в таблице to, ссылающийся на from
+        for(const [tname, tbl] of Object.entries(model.tables)) {
+          if(tbl.foreignKeys) {
+            for(const fk of tbl.foreignKeys) {
+              const fullFK = `${tname}.${fk.column}`;
+              if(fullFK === r.to && `${fk.refTable}.${fk.refColumn}` === r.from) {
+                foundFK = true;
+                // Если FK находится в to и ссылается на from, то это [1:N]
+                // Меняем местами кардинальности
+                const parts = r.type.split(":");
+                cardType = `${parts[1]}:${parts[0]}`;
+                break;
+              }
+            }
+          }
+          if(foundFK) break;
+        }
+      }
+      
+      // Если все еще не найдено, оставляем как есть
+      if(!foundFK && r.type !== "?") {
+        cardType = r.type;
+      }
+      
+      out.push(`${r.from}->${r.to} [${cardType}]`)
+    }
   }
   return out.join("\n").trim();
 }
