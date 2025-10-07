@@ -429,7 +429,7 @@ function parseDrawio(xml){
       if (refCol) {
         const fkCol = tbl.columns.find(c => c.name === fk.column);
         if (fkCol && !fkCol.dataType) {
-          fkCol.dataType = refCol.dataType || (refCol.name === "uuid" ? "uuid" : "");
+          fkCol.dataType = refCol.dataType || (refCol.name === "id" ? "serial" : refCol.name === "uuid" ? "uuid" : "");
         }
       }
     }
